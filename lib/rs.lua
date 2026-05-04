@@ -1,4 +1,5 @@
--- /lib/rs.lua  v3 — API moderna AP 0.7.5x+ per RS 2.x in 1.21.1
+-- /lib/rs.lua  v4 — Aggiunge itemBreakdown per stacked bar
+-- v3 — API moderna AP 0.7.5x+ per RS 2.x in 1.21.1
 -- listItems -> getItems, campo amount -> count, listFluids -> getFluids
 
 local rs = {}
@@ -140,6 +141,51 @@ function rs.craftableItems()
     if not bridge then return {} end
     local ok, items = pcall(bridge.getCraftableItems)
     return (ok and items) or {}
+end
+
+-- ============================================================
+-- Item breakdown: ritorna i top N item come % del totale "item_used"
+-- Utile per stacked bar di composizione storage.
+-- Ritorna: { breakdown = {{name, displayName, count, pct}, ...},
+--           others = N, others_pct = P, total = T }
+-- ============================================================
+function rs.itemBreakdown(topN)
+    topN = topN or 6
+    if not bridge then return nil end
+    local ok, items = pcall(bridge.getItems)
+    if not ok or type(items) ~= "table" then return nil end
+
+    -- Ordina per count desc
+    table.sort(items, function(a, b) return (a.count or 0) > (b.count or 0) end)
+
+    -- Calcola totale
+    local total = 0
+    for _, it in ipairs(items) do total = total + (it.count or 0) end
+    if total == 0 then
+        return { breakdown = {}, others = 0, others_pct = 0, total = 0 }
+    end
+
+    local breakdown = {}
+    local othersCount = 0
+    for i, it in ipairs(items) do
+        if i <= topN then
+            table.insert(breakdown, {
+                name        = it.name or "?",
+                displayName = it.displayName or it.name or "?",
+                count       = it.count or 0,
+                pct         = (it.count or 0) / total,
+            })
+        else
+            othersCount = othersCount + (it.count or 0)
+        end
+    end
+
+    return {
+        breakdown  = breakdown,
+        others     = othersCount,
+        others_pct = othersCount / total,
+        total      = total,
+    }
 end
 
 return rs

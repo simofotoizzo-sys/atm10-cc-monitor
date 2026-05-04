@@ -10,7 +10,7 @@ local capName = nil
 
 -- Storico circolare di campioni { time = os.epoch("utc"), e = energia }
 local history = {}
-local HIST_MAX = 120  -- circa 4 minuti se sample ogni 2s
+local HIST_MAX = 1800  -- 1 ora con sample ogni 2s
 
 -- ============================================================
 -- Init
@@ -123,10 +123,50 @@ end
 -- ============================================================
 -- Storico per grafico
 -- Ritorna una copia dell'array { {t, e}, ... }
+-- maxSamples opzionale: limita agli ultimi N sample
 -- ============================================================
-function energy.getHistory()
+function energy.getHistory(maxSamples)
     local copy = {}
-    for i, s in ipairs(history) do copy[i] = s end
+    if maxSamples and #history > maxSamples then
+        local start = #history - maxSamples + 1
+        for i = start, #history do
+            copy[#copy + 1] = history[i]
+        end
+    else
+        for i, s in ipairs(history) do copy[i] = s end
+    end
+    return copy
+end
+
+-- Ritorna solo le percentuali (per sparkline rapida)
+function energy.getPctHistory(maxSamples)
+    local copy = {}
+    local capa = energy.getCapacity() or 1
+    if capa <= 0 then return copy end
+    local start = 1
+    if maxSamples and #history > maxSamples then
+        start = #history - maxSamples + 1
+    end
+    for i = start, #history do
+        copy[#copy + 1] = history[i].e / capa
+    end
+    return copy
+end
+
+-- Ritorna i flow (FE/t) per sparkline I/O
+function energy.getFlowHistory(maxSamples)
+    local copy = {}
+    local start = math.max(2, (maxSamples and (#history - maxSamples + 1)) or 2)
+    for i = start, #history do
+        local prev = history[i - 1]
+        local cur  = history[i]
+        local dt = (cur.t - prev.t) / 1000  -- secondi
+        if dt > 0 then
+            local de = cur.e - prev.e
+            -- FE/t: 1 tick = 0.05s -> dividi de per (dt * 20)
+            copy[#copy + 1] = de / (dt * 20)
+        end
+    end
     return copy
 end
 
