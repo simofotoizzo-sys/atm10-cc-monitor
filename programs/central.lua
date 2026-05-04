@@ -1,6 +1,4 @@
--- /programs/central.lua  v5 — ASCII puro + sparkline multi-riga
--- Layout pulito senza caratteri Unicode rotti.
-
+-- /programs/central.lua  v6 — scale 1 sui laterali, legenda storage completa
 package.path = package.path .. ";/?.lua;/?/init.lua"
 
 local gui    = require("lib.gui")
@@ -13,8 +11,8 @@ local alerts = require("cfg.alerts")
 local health = require("lib.health")
 local logger = require("lib.logger")
 
-print("=== CENTRAL DASHBOARD v5 (ASCII) ===")
-logger.info("Central v5 (ASCII) avviato")
+print("=== CENTRAL DASHBOARD v6 ===")
+logger.info("Central v6 avviato")
 
 local rsOk = rs.init();    health.set("rs",        rsOk)
 local enOk = energy.init();health.set("energy",    enOk)
@@ -27,11 +25,12 @@ local p_bar2  = gui.attach("monitor_2")
 local p_lat3  = gui.attach("monitor_3")
 local p_lat4  = gui.attach("monitor_4")
 
+-- TUTTI a scale 1 - testo grande e leggibile
 p_top:setScale(1)
 p_bar1:setScale(1)
 p_bar2:setScale(1)
-p_lat3:setScale(0.5)
-p_lat4:setScale(0.5)
+p_lat3:setScale(1)
+p_lat4:setScale(1)
 
 local state = {
     farms          = { [1] = false, [2] = false },
@@ -40,7 +39,6 @@ local state = {
     api_proj_hours = 6,
     blink_on       = true,
     storage_breakdown = nil,
-    last_storage_breakdown = 0,
 }
 
 local P = gui.palette
@@ -90,16 +88,6 @@ local function energyColorAlert(pct)
     return P.fg_ok, "ok"
 end
 
-local function storageColorAlert(pct)
-    if pct > alerts.storage.crit_pct then
-        return state.blink_on and P.fg_crit or P.bg, "crit"
-    elseif pct > alerts.storage.warn_pct then
-        return P.fg_warn, "warn"
-    end
-    return colors.cyan, "ok"
-end
-
--- Colori distintivi per stack bar
 local STACK_COLORS = {
     colors.lime,
     colors.yellow,
@@ -110,8 +98,11 @@ local STACK_COLORS = {
 }
 local OTHERS_COLOR = colors.gray
 
+-- Etichetta colore per legenda (prima lettera per chiarezza)
+local STACK_LABELS = { "1", "2", "3", "4", "5", "6" }
+
 -- ============================================================
--- Render TOP (monitor centrale 7×5)
+-- Render TOP (49x25 char a scale 1)
 -- ============================================================
 local function renderTop()
     local W, H = p_top:size()
@@ -119,9 +110,8 @@ local function renderTop()
     p_top.buttons = {}
     p_top:box(1, 1, W, H, P.border)
 
-    -- HEADER (riga 1)
+    -- HEADER
     p_top:text(3, 1, " CENTRALE ", P.fg_title, P.bg)
-    -- health indicator
     local overall = health.overall(alerts.timeouts)
     local hLabel, hCol
     if overall == "ok" then
@@ -133,11 +123,10 @@ local function renderTop()
         hCol = state.blink_on and P.fg_crit or P.bg
     end
     p_top:text(15, 1, hLabel, hCol, P.bg)
-    -- clock
     local time_str = textutils.formatTime(os.time("local"), true)
     p_top:text(W - #time_str - 2, 1, time_str, P.fg_dim, P.bg)
 
-    -- ============ ENERGY ============
+    -- ============ ENERGY (riga 3-9) ============
     local sectY = 3
     p_top:divider(1, sectY, W, P.border)
     p_top:text(3, sectY, " ENERGY - VIBRANT CAP ", P.fg_title, P.bg)
@@ -146,74 +135,85 @@ local function renderTop()
     health.set("energy", es.ok)
     if es.ok then
         local ecol = energyColorAlert(es.pct)
-        -- riga 1: stored / capacity + percent
         p_top:text(3,  sectY + 1, "STORED  :", P.fg_label, P.bg)
         p_top:text(13, sectY + 1, ("%s / %s FE"):format(fmt(es.stored), fmt(es.capacity)), P.fg_value, P.bg)
         local pctStr = ("%.1f%%"):format(es.pct * 100)
         p_top:text(W - #pctStr - 2, sectY + 1, pctStr, ecol, P.bg)
 
-        -- riga 2: flow
         local flow = es.flow or 0
         local fcol = (flow >= 0) and P.fg_ok or P.fg_crit
         p_top:text(3,  sectY + 2, "FLOW    :", P.fg_label, P.bg)
         p_top:text(13, sectY + 2, ((flow >= 0) and "+" or "") .. fmt(flow) .. " FE/t", fcol, P.bg)
 
-        -- mini grafico 1H (3 righe alte, ultime 1800 sample)
+        -- sparkline 2 righe
         local hist = energy.getPctHistory(1800)
-        p_top:text(3, sectY + 3, "1H GRAPH:", P.fg_label, P.bg)
         if #hist >= 2 then
-            p_top:sparklineMulti(13, sectY + 3, W - 15, 3, hist,
+            p_top:sparklineMulti(3, sectY + 4, W - 4, 2, hist,
                 { color = ecol, min = 0, max = 1 })
         else
-            p_top:text(13, sectY + 3, "(in raccolta...)", P.fg_dim, P.bg)
+            p_top:text(3, sectY + 4, "(in raccolta...)", P.fg_dim, P.bg)
         end
     else
         p_top:text(3, sectY + 1, "OFFLINE - retry auto", P.fg_crit, P.bg)
     end
 
-    -- ============ STORAGE ============
-    sectY = sectY + 6
+    -- ============ STORAGE (riga 8-19) ============
+    sectY = 8
     p_top:divider(1, sectY, W, P.border)
     p_top:text(3, sectY, " STORAGE - REFINED ", P.fg_title, P.bg)
 
     local rss = rs.snapshot()
     health.set("rs", rss.ok)
     if rss.ok then
-        p_top:text(3,  sectY + 1, "ITEMS   :", P.fg_label, P.bg)
-        p_top:text(13, sectY + 1, ("%s / %s"):format(fmt(rss.item_used), fmt(rss.item_max)), P.fg_value, P.bg)
+        p_top:text(3,  sectY + 1, "ITEMS  :", P.fg_label, P.bg)
+        p_top:text(12, sectY + 1, ("%s / %s"):format(fmt(rss.item_used), fmt(rss.item_max)), P.fg_value, P.bg)
         local pctStr = ("%.3f%%"):format(rss.item_pct * 100)
         p_top:text(W - #pctStr - 2, sectY + 1, pctStr, colors.cyan, P.bg)
 
-        p_top:text(3,  sectY + 2, "USAGE   :", P.fg_label, P.bg)
-        p_top:text(13, sectY + 2, fmt(rss.energy_used) .. " FE", P.fg_value, P.bg)
-        local usageStr = tostring(rss.energy_usage) .. " FE/t"
-        p_top:text(W - #usageStr - 2, sectY + 2, usageStr, P.fg_dim, P.bg)
+        p_top:text(3,  sectY + 2, "USAGE  :", P.fg_label, P.bg)
+        p_top:text(12, sectY + 2, fmt(rss.energy_used) .. " FE @ " .. tostring(rss.energy_usage) .. " FE/t", P.fg_value, P.bg)
 
-        -- Top 3 composizione storage
+        -- Legenda completa: composizione barra verticale ->
+        p_top:text(3, sectY + 4, "COMPOSITION (matches vert. bar -->):", P.fg_dim, P.bg)
         if state.storage_breakdown and #state.storage_breakdown.breakdown > 0 then
-            p_top:text(3, sectY + 3, "TOP 3:", P.fg_label, P.bg)
-            local x = 11
-            for i = 1, math.min(3, #state.storage_breakdown.breakdown) do
-                local b = state.storage_breakdown.breakdown[i]
-                local nm = shorten(shortName(b.name), 7)
-                local pcs = ("%d%%"):format(math.floor(b.pct * 100 + 0.5))
-                local seg = nm .. " " .. pcs
-                local segCol = STACK_COLORS[i] or P.fg_main
-                if x + #seg + 1 < W - 2 then
-                    p_top:text(x, sectY + 3, seg, segCol, P.bg)
-                    x = x + #seg + 2
+            for i, b in ipairs(state.storage_breakdown.breakdown) do
+                if i > 6 then break end
+                local row = sectY + 4 + i
+                local segCol = STACK_COLORS[i] or colors.gray
+                -- Quadrato colorato come indicatore (3 spazi colorati)
+                p_top:fill(3, row, 3, 1, segCol)
+                -- Nome item
+                local nm = shortName(b.name)
+                p_top:text(7, row, shorten(nm, 24), P.fg_value, P.bg)
+                -- Percentuale
+                local pcs = ("%5.1f%%"):format(b.pct * 100)
+                p_top:text(W - #pcs - 12, row, pcs, segCol, P.bg)
+                -- Count
+                p_top:text(W - 9, row, fmt(b.count), P.fg_dim, P.bg)
+            end
+            -- OTHERS
+            if state.storage_breakdown.others_pct > 0 then
+                local row = sectY + 4 + math.min(6, #state.storage_breakdown.breakdown) + 1
+                if row < H - 4 then
+                    p_top:fill(3, row, 3, 1, OTHERS_COLOR)
+                    p_top:text(7, row, "OTHERS", P.fg_dim, P.bg)
+                    local pcs = ("%5.1f%%"):format(state.storage_breakdown.others_pct * 100)
+                    p_top:text(W - #pcs - 12, row, pcs, OTHERS_COLOR, P.bg)
+                    p_top:text(W - 9, row, fmt(state.storage_breakdown.others), P.fg_dim, P.bg)
                 end
             end
+        else
+            p_top:text(3, sectY + 5, "(in raccolta...)", P.fg_dim, P.bg)
         end
     else
         p_top:text(3, sectY + 1, "OFFLINE - retry auto", P.fg_crit, P.bg)
     end
 
-    -- ============ FOOTER (Satellite + bottoni farm) ============
-    sectY = sectY + 5
-    p_top:divider(1, sectY, W, P.border)
+    -- ============ FOOTER (riga 20-24) ============
+    local footY = 20
+    p_top:divider(1, footY, W, P.border)
 
-    -- Satellite status (sinistra)
+    -- Satellite status
     local sStatus = health.getStatus("satellite", alerts.timeouts)
     local satLabel, satCol
     if sStatus == "ok" then
@@ -224,34 +224,34 @@ local function renderTop()
         satLabel = "SATELLITE: OFFLINE"
         satCol = state.blink_on and P.fg_crit or P.bg
     end
-    p_top:text(3, sectY + 2, satLabel, satCol, P.bg)
+    p_top:text(3, footY + 1, satLabel, satCol, P.bg)
 
-    -- Bottoni farm a destra
-    local btnW = 16
-    local btnX = W - btnW - 2
+    -- Bottoni farm: alti 2 righe, larghi 14, affiancati a destra
+    local btnW = 13
+    local btn1X = W - 2 * btnW - 4  -- 2 bottoni con un po' di gap
+    local btn2X = W - btnW - 2
 
     local f1On = state.farms[1] == true
     local f1Bg = f1On and colors.green or colors.red
-    local f1Lbl = f1On and "FARM 1 [ ON ]" or "FARM 1 [OFF]"
-    p_top:button("farm1", btnX, sectY + 1, btnW, 2, f1Lbl, f1Bg, colors.white)
+    local f1Lbl = f1On and "FARM 1: ON" or "FARM 1: OFF"
+    p_top:button("farm1", btn1X, footY + 1, btnW, 2, f1Lbl, f1Bg, colors.white)
 
     local f2On = state.farms[2] == true
     local f2Bg = f2On and colors.green or colors.red
-    local f2Lbl = f2On and "FARM 2 [ ON ]" or "FARM 2 [OFF]"
-    p_top:button("farm2", btnX, sectY + 3, btnW, 2, f2Lbl, f2Bg, colors.white)
+    local f2Lbl = f2On and "FARM 2: ON" or "FARM 2: OFF"
+    p_top:button("farm2", btn2X, footY + 1, btnW, 2, f2Lbl, f2Bg, colors.white)
 
     p_top:flush()
 end
 
 -- ============================================================
--- BAR1: STORAGE (composizione stack)
+-- BAR1: STORAGE
 -- ============================================================
 local function renderBar1()
     local W, H = p_bar1:size()
     p_bar1:clear()
     p_bar1:box(1, 1, W, H, P.border)
 
-    -- Label "STORAGE" verticale
     local label = "STORAGE"
     local lblY = 2
     for i = 1, #label do
@@ -324,7 +324,7 @@ local function renderBar2()
 end
 
 -- ============================================================
--- LAT3: ENERGY DETAIL
+-- LAT3: ENERGY DETAIL (scale 1, 57x25 char)
 -- ============================================================
 local function renderEnergyDetail()
     local W, H = p_lat3:size()
@@ -332,7 +332,6 @@ local function renderEnergyDetail()
     p_lat3:box(1, 1, W, H, P.border)
 
     p_lat3:text(3, 1, " ENERGY DETAIL ", P.fg_title, P.bg)
-    p_lat3:text(W - 20, 1, " VIBRANT CAP. BANK ", P.fg_dim, P.bg)
 
     local s = energy.snapshot()
     if not s.ok then
@@ -341,55 +340,55 @@ local function renderEnergyDetail()
         return
     end
 
-    -- STATUS section
+    -- STATUS section (righe 3-9)
     local infoY = 3
     p_lat3:divider(1, infoY, W, P.border)
     p_lat3:text(3, infoY, " STATUS ", P.fg_title, P.bg)
 
-    p_lat3:text(3,  infoY + 1, "STORED       :", P.fg_label, P.bg)
-    p_lat3:text(18, infoY + 1, fmt(s.stored) .. " FE", P.fg_value, P.bg)
+    p_lat3:text(3,  infoY + 1, "STORED   :", P.fg_label, P.bg)
+    p_lat3:text(15, infoY + 1, fmt(s.stored) .. " FE", P.fg_value, P.bg)
 
-    p_lat3:text(3,  infoY + 2, "CAPACITY     :", P.fg_label, P.bg)
-    p_lat3:text(18, infoY + 2, fmt(s.capacity) .. " FE", P.fg_value, P.bg)
+    p_lat3:text(3,  infoY + 2, "CAPACITY :", P.fg_label, P.bg)
+    p_lat3:text(15, infoY + 2, fmt(s.capacity) .. " FE", P.fg_value, P.bg)
 
     -- LEVEL bar
-    p_lat3:text(3, infoY + 3, "LEVEL        :", P.fg_label, P.bg)
+    p_lat3:text(3, infoY + 3, "LEVEL    :", P.fg_label, P.bg)
     local ecol = energyColorAlert(s.pct)
-    local barW = W - 22 - 8
-    p_lat3:hbar(18, infoY + 3, barW, s.pct, ecol, colors.gray)
+    local barW = W - 26
+    p_lat3:hbar(15, infoY + 3, barW, s.pct, ecol, colors.gray)
     p_lat3:text(W - 9, infoY + 3, ("%6.2f%%"):format(s.pct * 100), ecol, P.bg)
 
-    p_lat3:text(3, infoY + 4, "FLOW NOW     :", P.fg_label, P.bg)
+    p_lat3:text(3, infoY + 4, "FLOW NOW :", P.fg_label, P.bg)
     local flow = s.flow or 0
     local fcol = (flow >= 0) and P.fg_ok or P.fg_crit
-    p_lat3:text(18, infoY + 4, ((flow >= 0) and "+" or "") .. fmt(flow) .. " FE/t", fcol, P.bg)
+    p_lat3:text(15, infoY + 4, ((flow >= 0) and "+" or "") .. fmt(flow) .. " FE/t", fcol, P.bg)
 
-    p_lat3:text(3, infoY + 5, "FLOW AVG 10s :", P.fg_label, P.bg)
+    p_lat3:text(3, infoY + 5, "AVG 10s  :", P.fg_label, P.bg)
     local avg = s.avg_flow or 0
     local acol = (avg >= 0) and P.fg_ok or P.fg_crit
-    p_lat3:text(18, infoY + 5, ((avg >= 0) and "+" or "") .. fmt(avg) .. " FE/t", acol, P.bg)
+    p_lat3:text(15, infoY + 5, ((avg >= 0) and "+" or "") .. fmt(avg) .. " FE/t", acol, P.bg)
 
-    p_lat3:text(3, infoY + 6, "STATUS       :", P.fg_label, P.bg)
-    if math.abs(flow) < 1 then       p_lat3:text(18, infoY + 6, "STABLE",      P.fg_dim,  P.bg)
-    elseif flow > 0 then             p_lat3:text(18, infoY + 6, "CHARGING",    P.fg_ok,   P.bg)
-    else                             p_lat3:text(18, infoY + 6, "DISCHARGING", P.fg_warn, P.bg) end
+    p_lat3:text(3, infoY + 6, "STATUS   :", P.fg_label, P.bg)
+    if math.abs(flow) < 1 then       p_lat3:text(15, infoY + 6, "STABLE",      P.fg_dim,  P.bg)
+    elseif flow > 0 then             p_lat3:text(15, infoY + 6, "CHARGING",    P.fg_ok,   P.bg)
+    else                             p_lat3:text(15, infoY + 6, "DISCHARGING", P.fg_warn, P.bg) end
 
-    -- POWER LEVEL HISTORY (grafico multi-riga 30 min)
-    local g1Y = infoY + 8
+    -- POWER LEVEL HISTORY (righe 11-23)
+    local g1Y = 11
     p_lat3:divider(1, g1Y, W, P.border)
     p_lat3:text(3, g1Y, " POWER LEVEL HISTORY (last 30 min) ", P.fg_title, P.bg)
 
-    local hist30 = energy.getPctHistory(900)  -- 30 min @ 2s
-    local chartH = 8
+    local hist30 = energy.getPctHistory(900)
+    local chartH = 10
     local chartX = 8
     local chartW = W - 10
 
-    -- Asse Y a 4 livelli
-    p_lat3:text(2, g1Y + 1,            "100%", P.fg_dim, P.bg)
+    -- Asse Y
+    p_lat3:text(2, g1Y + 1,                                   "100%", P.fg_dim, P.bg)
     p_lat3:text(2, g1Y + 1 + math.floor(chartH * 0.25), " 75%", P.fg_dim, P.bg)
     p_lat3:text(2, g1Y + 1 + math.floor(chartH * 0.5),  " 50%", P.fg_dim, P.bg)
     p_lat3:text(2, g1Y + 1 + math.floor(chartH * 0.75), " 25%", P.fg_dim, P.bg)
-    p_lat3:text(2, g1Y + chartH,       "  0%", P.fg_dim, P.bg)
+    p_lat3:text(2, g1Y + chartH,                              "  0%", P.fg_dim, P.bg)
 
     if #hist30 >= 2 then
         p_lat3:sparklineMulti(chartX, g1Y + 1, chartW, chartH, hist30,
@@ -403,32 +402,11 @@ local function renderEnergyDetail()
     p_lat3:text(chartX + math.floor(chartW / 2) - 2, g1Y + chartH + 1, "-15m", P.fg_dim, P.bg)
     p_lat3:text(chartX + chartW - 4, g1Y + chartH + 1, " now", P.fg_dim, P.bg)
 
-    -- I/O FLOW
-    local g2Y = g1Y + chartH + 3
-    p_lat3:divider(1, g2Y, W, P.border)
-    p_lat3:text(3, g2Y, " I/O FLOW (last 10 min) ", P.fg_title, P.bg)
-
-    local flowHist = energy.getFlowHistory(300)
-    if #flowHist >= 2 then
-        local maxAbs = 1
-        for _, v in ipairs(flowHist) do
-            if math.abs(v) > maxAbs then maxAbs = math.abs(v) end
-        end
-        local centerY = g2Y + 4
-        p_lat3:text(2, g2Y + 2,  ("+%s"):format(fmt(maxAbs)), P.fg_ok, P.bg)
-        p_lat3:text(2, centerY,  "  0   ", P.fg_dim, P.bg)
-        p_lat3:text(2, centerY + 2,  ("-%s"):format(fmt(maxAbs)), P.fg_crit, P.bg)
-        p_lat3:sparklineSym(chartX, centerY, chartW, 2, flowHist,
-            { posColor = P.fg_ok, negColor = P.fg_crit, maxAbs = maxAbs })
-    else
-        p_lat3:textCenter(g2Y + 2, "(in raccolta...)", P.fg_dim, P.bg)
-    end
-
     p_lat3:flush()
 end
 
 -- ============================================================
--- LAT4: API DASHBOARD
+-- LAT4: API DASHBOARD (scale 1, 57x25 char)
 -- ============================================================
 local function renderApiTabDettaglio()
     local W, H = p_lat4:size()
@@ -443,24 +421,23 @@ local function renderApiTabDettaglio()
     local prod = products[state.api_prod_idx]
     local s = bees.snapshot(prod.id)
 
-    p_lat4:divider(1, 5, W, P.border)
     p_lat4:text(3, 5, " " .. shortName(prod.id) .. " ", P.fg_title, P.bg)
-    p_lat4:text(W - 14, 5, ("(%d / %d)"):format(state.api_prod_idx, #products), P.fg_dim, P.bg)
+    p_lat4:text(W - 12, 5, ("(%d / %d)"):format(state.api_prod_idx, #products), P.fg_dim, P.bg)
 
     p_lat4:text(3,  7,  "STORED   :", P.fg_label, P.bg)
-    p_lat4:text(15, 7,  fmt(s.count) .. " units", P.fg_value, P.bg)
+    p_lat4:text(14, 7,  fmt(s.count) .. " units", P.fg_value, P.bg)
     p_lat4:text(3,  8,  "RATE 30m :", P.fg_label, P.bg)
-    p_lat4:text(15, 8,  fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
+    p_lat4:text(14, 8,  fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
     p_lat4:text(3,  9,  "RATE EMA :", P.fg_label, P.bg)
-    p_lat4:text(15, 9,  fmtRate(s.rate_ema), (s.rate_ema >= 0) and P.fg_ok or P.fg_crit, P.bg)
+    p_lat4:text(14, 9,  fmtRate(s.rate_ema), (s.rate_ema >= 0) and P.fg_ok or P.fg_crit, P.bg)
     p_lat4:text(3,  10, "TREND    :", P.fg_label, P.bg)
     local arrow, acol = trendArrow(s.trend)
     local tlbl = (s.trend > 0 and "rising") or (s.trend < 0 and "falling") or "stable"
-    p_lat4:text(15, 10, arrow .. " " .. tlbl, acol, P.bg)
+    p_lat4:text(14, 10, arrow .. " " .. tlbl, acol, P.bg)
     p_lat4:text(3,  11, "SAMPLES  :", P.fg_label, P.bg)
-    p_lat4:text(15, 11, tostring(s.n_samples), P.fg_dim, P.bg)
+    p_lat4:text(14, 11, tostring(s.n_samples), P.fg_dim, P.bg)
 
-    -- Grafico storico multi-riga
+    -- Grafico storico
     p_lat4:divider(1, 13, W, P.border)
     p_lat4:text(3, 13, " HISTORY (last 30 min) ", P.fg_title, P.bg)
 
@@ -468,48 +445,47 @@ local function renderApiTabDettaglio()
     if #hist >= 2 then
         local pts = {}
         for _, sm in ipairs(hist) do pts[#pts + 1] = sm.c end
-        p_lat4:sparklineMulti(4, 15, W - 18, 6, pts, { color = colors.cyan })
+        p_lat4:sparklineMulti(3, 15, W - 16, 5, pts, { color = colors.cyan })
         local minc, maxc = math.huge, -math.huge
         for _, v in ipairs(pts) do
             if v < minc then minc = v end
             if v > maxc then maxc = v end
         end
-        p_lat4:text(W - 14, 15, "max " .. fmt(maxc), P.fg_dim, P.bg)
-        p_lat4:text(W - 14, 17, "min " .. fmt(minc), P.fg_dim, P.bg)
+        p_lat4:text(W - 13, 15, "max " .. fmt(maxc), P.fg_dim, P.bg)
+        p_lat4:text(W - 13, 19, "min " .. fmt(minc), P.fg_dim, P.bg)
     else
         p_lat4:textCenter(17, "(in raccolta...)", P.fg_dim, P.bg)
     end
 
-    p_lat4:button("api_prev", 3,        H - 3, 14, 2, "< PREV",  colors.gray, P.fg_main)
-    p_lat4:button("api_next", W - 16,   H - 3, 14, 2, "NEXT >",  colors.gray, P.fg_main)
+    -- Bottoni in fondo
+    p_lat4:button("api_prev", 3,        H - 3, 12, 2, "< PREV",  colors.blue, colors.white)
+    p_lat4:button("api_next", W - 14,   H - 3, 12, 2, "NEXT >",  colors.blue, colors.white)
 end
 
 local function renderApiTabLista()
     local W, H = p_lat4:size()
-    p_lat4:divider(1, 5, W, P.border)
     p_lat4:text(3, 5, " PRODUCTS LIST ", P.fg_title, P.bg)
 
     p_lat4:text(3,  7, "PRODUCT",  P.fg_label, P.bg)
-    p_lat4:text(28, 7, "STORED",   P.fg_label, P.bg)
-    p_lat4:text(45, 7, "RATE 30m", P.fg_label, P.bg)
-    p_lat4:text(62, 7, "TREND",    P.fg_label, P.bg)
+    p_lat4:text(22, 7, "STORED",   P.fg_label, P.bg)
+    p_lat4:text(35, 7, "RATE 30m", P.fg_label, P.bg)
+    p_lat4:text(50, 7, "TR",       P.fg_label, P.bg)
     p_lat4:fill(3, 8, W - 4, 1, colors.gray)
 
     local all = bees.snapshotAll()
     for i, s in ipairs(all) do
         local row = 8 + i
         if row >= H - 1 then break end
-        p_lat4:text(3,  row, shorten(s.label, 22), P.fg_value, P.bg)
-        p_lat4:text(28, row, fmt(s.count), colors.cyan, P.bg)
-        p_lat4:text(45, row, fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
+        p_lat4:text(3,  row, shorten(s.label, 17), P.fg_value, P.bg)
+        p_lat4:text(22, row, fmt(s.count), colors.cyan, P.bg)
+        p_lat4:text(35, row, fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
         local arrow, acol = trendArrow(s.trend)
-        p_lat4:text(64, row, arrow, acol, P.bg)
+        p_lat4:text(51, row, arrow, acol, P.bg)
     end
 end
 
 local function renderApiTabProiezione()
     local W, H = p_lat4:size()
-    p_lat4:divider(1, 5, W, P.border)
     p_lat4:text(3, 5, " PROJECTION ", P.fg_title, P.bg)
 
     p_lat4:text(3, 7, "PROJECT IN:", P.fg_label, P.bg)
@@ -521,9 +497,9 @@ local function renderApiTabProiezione()
 
     p_lat4:fill(3, 9, W - 4, 1, colors.gray)
     p_lat4:text(3,  9,  "PRODUCT",  P.fg_value, colors.gray)
-    p_lat4:text(28, 9,  "NOW",      P.fg_value, colors.gray)
-    p_lat4:text(45, 9,  "+" .. state.api_proj_hours .. "h", P.fg_value, colors.gray)
-    p_lat4:text(62, 9,  "DELTA",    P.fg_value, colors.gray)
+    p_lat4:text(22, 9,  "NOW",      P.fg_value, colors.gray)
+    p_lat4:text(35, 9,  "+" .. state.api_proj_hours .. "h", P.fg_value, colors.gray)
+    p_lat4:text(50, 9,  "DELTA",    P.fg_value, colors.gray)
 
     for i, prod in ipairs(bees.getProducts()) do
         local row = 9 + i
@@ -532,41 +508,39 @@ local function renderApiTabProiezione()
         local fut = bees.project(prod.id, state.api_proj_hours)
         local d = fut - cur
         local dcol = (d >= 0) and P.fg_ok or P.fg_crit
-        p_lat4:text(3,  row, shorten(prod.label, 22), P.fg_value, P.bg)
-        p_lat4:text(28, row, fmt(cur), colors.cyan, P.bg)
-        p_lat4:text(45, row, fmt(fut), P.fg_value, P.bg)
-        p_lat4:text(62, row, ((d >= 0) and "+" or "") .. fmt(d), dcol, P.bg)
+        p_lat4:text(3,  row, shorten(prod.label, 18), P.fg_value, P.bg)
+        p_lat4:text(22, row, fmt(cur), colors.cyan, P.bg)
+        p_lat4:text(35, row, fmt(fut), P.fg_value, P.bg)
+        p_lat4:text(50, row, ((d >= 0) and "+" or "") .. fmt(d), dcol, P.bg)
     end
 end
 
 local function renderApiTabGrafici()
     local W, H = p_lat4:size()
-    p_lat4:divider(1, 5, W, P.border)
-    p_lat4:text(3, 5, " PRODUCTION CHARTS (last 30 min) ", P.fg_title, P.bg)
+    p_lat4:text(3, 5, " PRODUCTION CHARTS (30 min) ", P.fg_title, P.bg)
 
     local products = bees.getProducts()
     local rowY = 7
     for _, prod in ipairs(products) do
-        if rowY >= H - 4 then break end
+        if rowY >= H - 2 then break end
         local s = bees.snapshot(prod.id)
         local hist = bees.getHistory(prod.id, 60)
         local pts = {}
         for _, sm in ipairs(hist) do pts[#pts + 1] = sm.c end
 
-        p_lat4:text(3, rowY, shorten(shortName(prod.id), 12), P.fg_label, P.bg)
+        p_lat4:text(3, rowY, shorten(shortName(prod.id), 11), P.fg_label, P.bg)
         if #pts >= 2 then
-            -- mini sparkline 2 righe alta
-            p_lat4:sparklineMulti(17, rowY, W - 38, 2, pts, { color = colors.cyan })
+            p_lat4:sparklineMulti(15, rowY, W - 28, 1, pts, { color = colors.cyan })
         else
-            p_lat4:text(17, rowY, "(no data)", P.fg_dim, P.bg)
+            p_lat4:text(15, rowY, "(no data)", P.fg_dim, P.bg)
         end
         local rateStr = fmtRate(s.rate_30m)
         local rcol = (s.rate_30m >= 0) and P.fg_ok or P.fg_crit
-        p_lat4:text(W - 18, rowY, rateStr, rcol, P.bg)
+        p_lat4:text(W - 12, rowY, rateStr, rcol, P.bg)
         local arrow, acol = trendArrow(s.trend)
-        p_lat4:text(W - 4, rowY, arrow, acol, P.bg)
+        p_lat4:text(W - 2, rowY, arrow, acol, P.bg)
 
-        rowY = rowY + 3
+        rowY = rowY + 2
     end
 end
 
@@ -579,7 +553,7 @@ local function renderApi()
     local ts = textutils.formatTime(os.time("local"), true)
     p_lat4:text(W - #ts - 2, 1, ts, P.fg_dim, P.bg)
 
-    -- Tabs
+    -- Tabs piu' grandi
     local tabs = {
         { id = "dettaglio",  label = "DETAIL"   },
         { id = "lista",      label = "LIST"     },
@@ -687,7 +661,6 @@ local function taskStorageBreakdown()
         local ok, br = pcall(rs.itemBreakdown, 6)
         if ok and br then
             state.storage_breakdown = br
-            state.last_storage_breakdown = os.epoch("utc")
         end
         sleep(10)
     end
@@ -747,7 +720,7 @@ print("")
 print("Avvio task paralleli...")
 print("Premi Ctrl+T per uscire.")
 print("")
-logger.info("Task paralleli avviati (v5 ASCII)")
+logger.info("Task paralleli avviati (v6)")
 
 parallel.waitForAny(
     taskEnergy, taskBees, taskSatSync, taskRsHealth,
