@@ -1,9 +1,6 @@
--- /programs/central.lua  v8
--- Fix Fase 8.4:
---  - Bottoni FARM in fondo, centrati orizzontalmente
---  - Riga info aggiuntiva su monitor TOP (uptime, avg flow)
---  - Monitor 3: chart power piu' grande, sezione QUICK STATS in fondo
---  - Monitor 4: chart history piu' grande, riga summary in fondo
+-- /programs/central.lua  v9
+-- Fix: padding superiore per spostare tutto piu' in basso
+-- (il contenuto era percepito come "troppo in alto")
 
 package.path = package.path .. ";/?.lua;/?/init.lua"
 
@@ -17,8 +14,8 @@ local alerts = require("cfg.alerts")
 local health = require("lib.health")
 local logger = require("lib.logger")
 
-print("=== CENTRAL DASHBOARD v8 ===")
-logger.info("Central v8 avviato")
+print("=== CENTRAL DASHBOARD v9 ===")
+logger.info("Central v9 avviato")
 
 local rsOk = rs.init();    health.set("rs",        rsOk)
 local enOk = energy.init();health.set("energy",    enOk)
@@ -99,9 +96,9 @@ local function fmtUptime()
     local sec = math.floor((os.epoch("utc") - START_TIME) / 1000)
     if sec < 60 then return tostring(sec) .. "s" end
     local m = math.floor(sec / 60)
-    if m < 60 then return ("%dm %ds"):format(m, sec % 60) end
+    if m < 60 then return ("%dm"):format(m) end
     local h = math.floor(m / 60)
-    return ("%dh %dm"):format(h, m % 60)
+    return ("%dh%dm"):format(h, m % 60)
 end
 
 local STACK_COLORS = {
@@ -115,7 +112,19 @@ local STACK_COLORS = {
 local OTHERS_COLOR = colors.gray
 
 -- ============================================================
--- Render TOP (49x25)
+-- Render TOP (49x25) - SHIFTED DOWN
+-- 1: bordo top
+-- 2-3: PADDING (vuoto)
+-- 4: header
+-- 5: divider
+-- 6-10: ENERGY (5 righe)
+-- 11: divider
+-- 12-19: STORAGE (8 righe = title+items+usage+composition+4 items+others)
+-- 20: divider
+-- 21: info row (sat/avg/uptime)
+-- 22-23: bottoni FARM
+-- 24: padding
+-- 25: bordo bottom
 -- ============================================================
 local function renderTop()
     local W, H = p_top:size()
@@ -123,8 +132,8 @@ local function renderTop()
     p_top.buttons = {}
     p_top:box(1, 1, W, H, P.border)
 
-    -- HEADER
-    p_top:text(3, 1, " CENTRALE ", P.fg_title, P.bg)
+    -- HEADER (riga 4)
+    p_top:text(3, 4, " CENTRALE ", P.fg_title, P.bg)
     local overall = health.overall(alerts.timeouts)
     local hLabel, hCol
     if overall == "ok" then
@@ -135,12 +144,12 @@ local function renderTop()
         hLabel = "[CRITICAL]"
         hCol = state.blink_on and P.fg_crit or P.bg
     end
-    p_top:text(15, 1, hLabel, hCol, P.bg)
+    p_top:text(15, 4, hLabel, hCol, P.bg)
     local time_str = textutils.formatTime(os.time("local"), true)
-    p_top:text(W - #time_str - 2, 1, time_str, P.fg_dim, P.bg)
+    p_top:text(W - #time_str - 2, 4, time_str, P.fg_dim, P.bg)
 
-    -- ENERGY (3-8)
-    local sectY = 3
+    -- ENERGY (6-10)
+    local sectY = 5
     p_top:divider(1, sectY, W, P.border)
     p_top:text(3, sectY, " ENERGY - VIBRANT CAP ", P.fg_title, P.bg)
 
@@ -160,7 +169,7 @@ local function renderTop()
 
         local hist = energy.getPctHistory(1800)
         if #hist >= 2 then
-            p_top:sparklineMulti(3, sectY + 4, W - 4, 2, hist,
+            p_top:sparklineMulti(3, sectY + 4, W - 4, 1, hist,
                 { color = ecol, min = 0, max = 1 })
         else
             p_top:text(3, sectY + 4, "(in raccolta...)", P.fg_dim, P.bg)
@@ -169,8 +178,8 @@ local function renderTop()
         p_top:text(3, sectY + 1, "OFFLINE - retry auto", P.fg_crit, P.bg)
     end
 
-    -- STORAGE (9-19)
-    sectY = 9
+    -- STORAGE (11-19)
+    sectY = 11
     p_top:divider(1, sectY, W, P.border)
     p_top:text(3, sectY, " STORAGE - REFINED ", P.fg_title, P.bg)
 
@@ -187,7 +196,7 @@ local function renderTop()
 
         p_top:text(3, sectY + 3, "COMPOSITION (matches vert. bar -->):", P.fg_dim, P.bg)
         if state.storage_breakdown and #state.storage_breakdown.breakdown > 0 then
-            local maxItems = 5
+            local maxItems = 4
             for i = 1, math.min(maxItems, #state.storage_breakdown.breakdown) do
                 local b = state.storage_breakdown.breakdown[i]
                 local row = sectY + 3 + i
@@ -201,7 +210,7 @@ local function renderTop()
             end
             if state.storage_breakdown.others_pct > 0 then
                 local rowOthers = sectY + 3 + math.min(maxItems, #state.storage_breakdown.breakdown) + 1
-                if rowOthers <= sectY + 9 then
+                if rowOthers <= 19 then
                     p_top:fill(3, rowOthers, 3, 1, OTHERS_COLOR)
                     p_top:text(7, rowOthers, "OTHERS", P.fg_dim, P.bg)
                     local pcs = ("%5.1f%%"):format(state.storage_breakdown.others_pct * 100)
@@ -216,16 +225,10 @@ local function renderTop()
         p_top:text(3, sectY + 1, "OFFLINE - retry auto", P.fg_crit, P.bg)
     end
 
-    -- ============ FOOTER (riga 20-24) ============
-    -- 20: divider
-    -- 21: info riga (satellite + uptime + avg flow)
-    -- 22: divider thin
-    -- 23-24: bottoni FARM centrati
-    -- 25: bordo bottom
-    local footY = 20
-    p_top:divider(1, footY, W, P.border)
+    -- FOOTER (20-24)
+    p_top:divider(1, 20, W, P.border)
 
-    -- Riga info
+    -- Info riga 21
     local sStatus = health.getStatus("satellite", alerts.timeouts)
     local satLabel, satCol
     if sStatus == "ok" then
@@ -236,24 +239,19 @@ local function renderTop()
         satLabel = "SAT: OFFLINE"
         satCol = state.blink_on and P.fg_crit or P.bg
     end
-    p_top:text(3, footY + 1, satLabel, satCol, P.bg)
+    p_top:text(3, 21, satLabel, satCol, P.bg)
 
-    -- Avg flow al centro
     if es.ok then
         local avg = es.avg_flow or 0
         local acol = (avg >= 0) and P.fg_ok or P.fg_crit
         local avgStr = "AVG: " .. ((avg >= 0) and "+" or "") .. fmt(avg) .. " FE/t"
-        p_top:text(20, footY + 1, avgStr, acol, P.bg)
+        p_top:text(20, 21, avgStr, acol, P.bg)
     end
 
-    -- Uptime a destra
     local upStr = "UP: " .. fmtUptime()
-    p_top:text(W - #upStr - 2, footY + 1, upStr, P.fg_dim, P.bg)
+    p_top:text(W - #upStr - 2, 21, upStr, P.fg_dim, P.bg)
 
-    -- Divider thin sotto info
-    p_top:dividerThin(1, footY + 2, W, P.border)
-
-    -- Bottoni FARM CENTRATI (riga 23-24)
+    -- Bottoni FARM (22-23 alti 2 righe, centrati)
     local btnW = 14
     local gap = 4
     local totalBtnW = 2 * btnW + gap
@@ -264,12 +262,12 @@ local function renderTop()
     local f1On = state.farms[1] == true
     local f1Bg = f1On and colors.green or colors.red
     local f1Lbl = f1On and "FARM 1: ON " or "FARM 1: OFF"
-    p_top:button("farm1", btn1X, footY + 3, btnW, 2, f1Lbl, f1Bg, colors.white)
+    p_top:button("farm1", btn1X, 22, btnW, 2, f1Lbl, f1Bg, colors.white)
 
     local f2On = state.farms[2] == true
     local f2Bg = f2On and colors.green or colors.red
     local f2Lbl = f2On and "FARM 2: ON " or "FARM 2: OFF"
-    p_top:button("farm2", btn2X, footY + 3, btnW, 2, f2Lbl, f2Bg, colors.white)
+    p_top:button("farm2", btn2X, 22, btnW, 2, f2Lbl, f2Bg, colors.white)
 
     p_top:flush()
 end
@@ -354,21 +352,19 @@ local function renderBar2()
 end
 
 -- ============================================================
--- LAT3: ENERGY DETAIL (57x25)
--- Layout:
+-- LAT3: ENERGY DETAIL (57x25) - SHIFTED DOWN
 -- 1:  bordo
--- 2:  header
--- 3:  divider STATUS
--- 4-8: status (5 righe)
--- 9:  divider POWER
--- 10: titolo POWER
--- 11-16: chart 6 righe
--- 17: asse X
--- 18: divider I/O
--- 19: titolo I/O
--- 20-22: chart sym 3 righe
--- 23: divider STATS
--- 24: quick stats
+-- 2-3: padding
+-- 4: header
+-- 5: divider STATUS
+-- 6-11: status (6 righe: stored, capacity, level, flow now+status, avg, blank)
+-- 12: divider POWER
+-- 13: title power
+-- 14-19: chart 6 righe
+-- 20: asse X
+-- 21: divider I/O
+-- 22: title I/O
+-- 23-24: chart sym 2 righe (compatto)
 -- 25: bordo
 -- ============================================================
 local function renderEnergyDetail()
@@ -376,8 +372,9 @@ local function renderEnergyDetail()
     p_lat3:clear()
     p_lat3:box(1, 1, W, H, P.border)
 
-    p_lat3:text(3, 1, " ENERGY DETAIL ", P.fg_title, P.bg)
-    p_lat3:text(W - 18, 1, "VIBRANT CAP. BANK", P.fg_dim, P.bg)
+    -- header riga 4
+    p_lat3:text(3, 4, " ENERGY DETAIL ", P.fg_title, P.bg)
+    p_lat3:text(W - 18, 4, "VIBRANT CAP. BANK", P.fg_dim, P.bg)
 
     local s = energy.snapshot()
     if not s.ok then
@@ -386,8 +383,8 @@ local function renderEnergyDetail()
         return
     end
 
-    -- STATUS (4-8)
-    local infoY = 3
+    -- STATUS (5-11)
+    local infoY = 5
     p_lat3:divider(1, infoY, W, P.border)
     p_lat3:text(3, infoY, " STATUS ", P.fg_title, P.bg)
 
@@ -403,12 +400,10 @@ local function renderEnergyDetail()
     p_lat3:hbar(15, infoY + 3, barW, s.pct, ecol, colors.gray)
     p_lat3:text(W - 9, infoY + 3, ("%6.2f%%"):format(s.pct * 100), ecol, P.bg)
 
-    -- FLOW NOW + STATUS combinati su 1 riga
     p_lat3:text(3, infoY + 4, "FLOW NOW :", P.fg_label, P.bg)
     local flow = s.flow or 0
     local fcol = (flow >= 0) and P.fg_ok or P.fg_crit
     p_lat3:text(15, infoY + 4, ((flow >= 0) and "+" or "") .. fmt(flow) .. " FE/t", fcol, P.bg)
-    -- Status a destra
     local statusLabel
     if math.abs(flow) < 1 then       statusLabel = "STABLE"
     elseif flow > 0 then             statusLabel = "CHARGING"
@@ -421,8 +416,8 @@ local function renderEnergyDetail()
     local acol = (avg >= 0) and P.fg_ok or P.fg_crit
     p_lat3:text(15, infoY + 5, ((avg >= 0) and "+" or "") .. fmt(avg) .. " FE/t", acol, P.bg)
 
-    -- POWER LEVEL HISTORY (9-17)
-    local g1Y = 9
+    -- POWER LEVEL HISTORY (12-20)
+    local g1Y = 12
     p_lat3:divider(1, g1Y, W, P.border)
     p_lat3:text(3, g1Y, " POWER LEVEL HISTORY (last 30 min) ", P.fg_title, P.bg)
 
@@ -446,8 +441,8 @@ local function renderEnergyDetail()
     p_lat3:text(chartX + math.floor(chartW / 2) - 2, g1Y + chartH + 1, "-15m", P.fg_dim, P.bg)
     p_lat3:text(chartX + chartW - 4, g1Y + chartH + 1, " now", P.fg_dim, P.bg)
 
-    -- I/O FLOW (18-22)
-    local g2Y = 18
+    -- I/O FLOW (21-24)
+    local g2Y = 21
     p_lat3:divider(1, g2Y, W, P.border)
     p_lat3:text(3, g2Y, " I/O FLOW (last 10 min) ", P.fg_title, P.bg)
 
@@ -457,9 +452,9 @@ local function renderEnergyDetail()
         for _, v in ipairs(flowHist) do
             if math.abs(v) > maxAbs then maxAbs = math.abs(v) end
         end
+        -- Versione compatta 2 righe (1+0+1)
         local centerY = g2Y + 2
         p_lat3:text(2, g2Y + 1, ("+%s"):format(fmt(maxAbs)), P.fg_ok,   P.bg)
-        p_lat3:text(2, centerY, "  0    ",                     P.fg_dim,  P.bg)
         p_lat3:text(2, g2Y + 3, ("-%s"):format(fmt(maxAbs)), P.fg_crit, P.bg)
         p_lat3:sparklineSym(chartX, centerY, chartW, 1, flowHist,
             { posColor = P.fg_ok, negColor = P.fg_crit, maxAbs = maxAbs })
@@ -467,36 +462,23 @@ local function renderEnergyDetail()
         p_lat3:textCenter(g2Y + 2, "(in raccolta...)", P.fg_dim, P.bg)
     end
 
-    -- QUICK STATS (23-24)
-    p_lat3:divider(1, 23, W, P.border)
-    p_lat3:text(3, 23, " QUICK STATS ", P.fg_title, P.bg)
-
-    -- Calcolo statistiche
-    local hist1h = energy.getFlowHistory(1800)
-    local sumFlow = 0
-    local peakPos = 0
-    local peakNeg = 0
-    for _, v in ipairs(hist1h) do
-        sumFlow = sumFlow + v
-        if v > peakPos then peakPos = v end
-        if v < peakNeg then peakNeg = v end
-    end
-    local avg1h = (#hist1h > 0) and (sumFlow / #hist1h) or 0
-    local avg1hCol = (avg1h >= 0) and P.fg_ok or P.fg_crit
-
-    p_lat3:text(3,  24, "AVG 1H:", P.fg_label, P.bg)
-    p_lat3:text(11, 24, ((avg1h >= 0) and "+" or "") .. fmt(avg1h) .. " FE/t", avg1hCol, P.bg)
-    p_lat3:text(24, 24, "PEAK+:", P.fg_label, P.bg)
-    p_lat3:text(31, 24, "+" .. fmt(peakPos) .. " FE/t", P.fg_ok, P.bg)
-    p_lat3:text(43, 24, "PEAK-:", P.fg_label, P.bg)
-    p_lat3:text(50, 24, fmt(peakNeg) .. " FE/t", P.fg_crit, P.bg)
-
     p_lat3:flush()
 end
 
 -- ============================================================
--- LAT4: API DASHBOARD (57x25)
+-- LAT4: API DASHBOARD (57x25) - SHIFTED DOWN
+-- 1:  bordo
+-- 2-3: padding
+-- 4: header
+-- 5: divider
+-- 6-19: tab content (14 righe)
+-- 20: divider tabs
+-- 21: tab buttons
+-- 22: divider nav (DETAIL only)
+-- 23-24: nav buttons (DETAIL only)
+-- 25: bordo
 -- ============================================================
+
 local function renderApiTabDettaglio()
     local W, H = p_lat4:size()
     local products = bees.getProducts()
@@ -510,130 +492,102 @@ local function renderApiTabDettaglio()
     local prod = products[state.api_prod_idx]
     local s = bees.snapshot(prod.id)
 
-    -- Titolo prodotto (riga 4)
-    p_lat4:text(3, 4, shortName(prod.id), P.fg_title, P.bg)
-    p_lat4:text(W - 11, 4, ("(%d / %d)"):format(state.api_prod_idx, #products), P.fg_dim, P.bg)
+    p_lat4:text(3, 6, shortName(prod.id), P.fg_title, P.bg)
+    p_lat4:text(W - 11, 6, ("(%d / %d)"):format(state.api_prod_idx, #products), P.fg_dim, P.bg)
 
-    -- Info (righe 6-10)
-    p_lat4:text(3,  6,  "STORED    :", P.fg_label, P.bg)
-    p_lat4:text(15, 6,  fmt(s.count) .. " units", P.fg_value, P.bg)
-    p_lat4:text(3,  7,  "RATE 30m  :", P.fg_label, P.bg)
-    p_lat4:text(15, 7,  fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
-    p_lat4:text(3,  8,  "RATE EMA  :", P.fg_label, P.bg)
-    p_lat4:text(15, 8,  fmtRate(s.rate_ema), (s.rate_ema >= 0) and P.fg_ok or P.fg_crit, P.bg)
-    p_lat4:text(3,  9,  "TREND     :", P.fg_label, P.bg)
+    p_lat4:text(3,  8,  "STORED    :", P.fg_label, P.bg)
+    p_lat4:text(15, 8,  fmt(s.count) .. " units", P.fg_value, P.bg)
+    p_lat4:text(3,  9,  "RATE 30m  :", P.fg_label, P.bg)
+    p_lat4:text(15, 9,  fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
+    p_lat4:text(3,  10, "RATE EMA  :", P.fg_label, P.bg)
+    p_lat4:text(15, 10, fmtRate(s.rate_ema), (s.rate_ema >= 0) and P.fg_ok or P.fg_crit, P.bg)
+    p_lat4:text(3,  11, "TREND     :", P.fg_label, P.bg)
     local arrow, acol = trendArrow(s.trend)
     local tlbl = (s.trend > 0 and "rising") or (s.trend < 0 and "falling") or "stable"
-    p_lat4:text(15, 9,  arrow .. " " .. tlbl, acol, P.bg)
-    p_lat4:text(3,  10, "SAMPLES   :", P.fg_label, P.bg)
-    p_lat4:text(15, 10, tostring(s.n_samples), P.fg_dim, P.bg)
+    p_lat4:text(15, 11, arrow .. " " .. tlbl, acol, P.bg)
+    p_lat4:text(3,  12, "SAMPLES   :", P.fg_label, P.bg)
+    p_lat4:text(15, 12, tostring(s.n_samples), P.fg_dim, P.bg)
 
-    -- Grafico HISTORY ingrandito (righe 12-19)
-    p_lat4:text(3, 12, "HISTORY (last 30 min):", P.fg_title, P.bg)
+    p_lat4:text(3, 14, "HISTORY (last 30 min):", P.fg_title, P.bg)
     local hist = bees.getHistory(prod.id, 60)
     if #hist >= 2 then
         local pts = {}
         for _, sm in ipairs(hist) do pts[#pts + 1] = sm.c end
-        p_lat4:sparklineMulti(3, 13, W - 16, 7, pts, { color = colors.cyan })
+        p_lat4:sparklineMulti(3, 15, W - 16, 5, pts, { color = colors.cyan })
         local minc, maxc = math.huge, -math.huge
         for _, v in ipairs(pts) do
             if v < minc then minc = v end
             if v > maxc then maxc = v end
         end
-        p_lat4:text(W - 13, 13, "max " .. fmt(maxc), P.fg_dim, P.bg)
+        p_lat4:text(W - 13, 15, "max " .. fmt(maxc), P.fg_dim, P.bg)
         p_lat4:text(W - 13, 19, "min " .. fmt(minc), P.fg_dim, P.bg)
     else
-        p_lat4:textCenter(15, "(in raccolta...)", P.fg_dim, P.bg)
+        p_lat4:textCenter(17, "(in raccolta...)", P.fg_dim, P.bg)
     end
 end
 
 local function renderApiTabLista()
     local W, H = p_lat4:size()
-    p_lat4:text(3, 4, " PRODUCTS LIST ", P.fg_title, P.bg)
+    p_lat4:text(3, 6, " PRODUCTS LIST ", P.fg_title, P.bg)
 
-    p_lat4:text(3,  6, "PRODUCT",  P.fg_label, P.bg)
-    p_lat4:text(22, 6, "STORED",   P.fg_label, P.bg)
-    p_lat4:text(35, 6, "RATE 30m", P.fg_label, P.bg)
-    p_lat4:text(50, 6, "TR",       P.fg_label, P.bg)
-    p_lat4:fill(3, 7, W - 4, 1, colors.gray)
+    p_lat4:text(3,  8, "PRODUCT",  P.fg_label, P.bg)
+    p_lat4:text(22, 8, "STORED",   P.fg_label, P.bg)
+    p_lat4:text(35, 8, "RATE 30m", P.fg_label, P.bg)
+    p_lat4:text(50, 8, "TR",       P.fg_label, P.bg)
+    p_lat4:fill(3, 9, W - 4, 1, colors.gray)
 
     local all = bees.snapshotAll()
-    local totalCount = 0
-    local totalRate = 0
-    local growing = 0
-    for _, s in ipairs(all) do
-        totalCount = totalCount + s.count
-        totalRate = totalRate + (s.rate_30m or 0)
-        if (s.trend or 0) > 0 then growing = growing + 1 end
-    end
-
     for i, s in ipairs(all) do
-        local row = 7 + i
-        if row >= 18 then break end
+        local row = 9 + i
+        if row >= 19 then break end
         p_lat4:text(3,  row, shorten(s.label, 17), P.fg_value, P.bg)
         p_lat4:text(22, row, fmt(s.count), colors.cyan, P.bg)
         p_lat4:text(35, row, fmtRate(s.rate_30m), (s.rate_30m >= 0) and P.fg_ok or P.fg_crit, P.bg)
         local arrow, acol = trendArrow(s.trend)
         p_lat4:text(51, row, arrow, acol, P.bg)
     end
-
-    -- Summary in fondo
-    p_lat4:dividerThin(1, 18, W, P.border)
-    p_lat4:text(3, 19, "TOT: " .. fmt(totalCount), P.fg_label, P.bg)
-    local tCol = (totalRate >= 0) and P.fg_ok or P.fg_crit
-    p_lat4:text(22, 19, "RATE: " .. fmtRate(totalRate), tCol, P.bg)
-    p_lat4:text(40, 19, "GROWING: " .. tostring(growing) .. "/" .. tostring(#all), P.fg_label, P.bg)
 end
 
 local function renderApiTabProiezione()
     local W, H = p_lat4:size()
-    p_lat4:text(3, 4, " PROJECTION ", P.fg_title, P.bg)
+    p_lat4:text(3, 6, " PROJECTION ", P.fg_title, P.bg)
 
-    p_lat4:text(3, 6, "PROJECT IN:", P.fg_label, P.bg)
-    p_lat4:fill(15, 6, 6, 1, colors.gray)
-    p_lat4:text(17, 6, ("%4d"):format(state.api_proj_hours), P.fg_value, colors.gray)
-    p_lat4:text(22, 6, "hours", P.fg_label, P.bg)
-    p_lat4:button("api_h_minus", 30, 6, 5, 1, " - ", colors.red,   colors.white)
-    p_lat4:button("api_h_plus",  37, 6, 5, 1, " + ", colors.green, colors.white)
+    p_lat4:text(3, 8, "PROJECT IN:", P.fg_label, P.bg)
+    p_lat4:fill(15, 8, 6, 1, colors.gray)
+    p_lat4:text(17, 8, ("%4d"):format(state.api_proj_hours), P.fg_value, colors.gray)
+    p_lat4:text(22, 8, "hours", P.fg_label, P.bg)
+    p_lat4:button("api_h_minus", 30, 8, 5, 1, " - ", colors.red,   colors.white)
+    p_lat4:button("api_h_plus",  37, 8, 5, 1, " + ", colors.green, colors.white)
 
-    p_lat4:fill(3, 8, W - 4, 1, colors.gray)
-    p_lat4:text(3,  8,  "PRODUCT",  P.fg_value, colors.gray)
-    p_lat4:text(22, 8,  "NOW",      P.fg_value, colors.gray)
-    p_lat4:text(35, 8,  "+" .. state.api_proj_hours .. "h", P.fg_value, colors.gray)
-    p_lat4:text(50, 8,  "DELTA",    P.fg_value, colors.gray)
+    p_lat4:fill(3, 10, W - 4, 1, colors.gray)
+    p_lat4:text(3,  10,  "PRODUCT",  P.fg_value, colors.gray)
+    p_lat4:text(22, 10,  "NOW",      P.fg_value, colors.gray)
+    p_lat4:text(35, 10,  "+" .. state.api_proj_hours .. "h", P.fg_value, colors.gray)
+    p_lat4:text(50, 10,  "DELTA",    P.fg_value, colors.gray)
 
-    local totalDelta = 0
     for i, prod in ipairs(bees.getProducts()) do
-        local row = 8 + i
-        if row >= 19 then break end
+        local row = 10 + i
+        if row >= 20 then break end
         local cur = bees.getCount(prod.id)
         local fut = bees.project(prod.id, state.api_proj_hours)
         local d = fut - cur
-        totalDelta = totalDelta + d
         local dcol = (d >= 0) and P.fg_ok or P.fg_crit
         p_lat4:text(3,  row, shorten(prod.label, 18), P.fg_value, P.bg)
         p_lat4:text(22, row, fmt(cur), colors.cyan, P.bg)
         p_lat4:text(35, row, fmt(fut), P.fg_value, P.bg)
         p_lat4:text(50, row, ((d >= 0) and "+" or "") .. fmt(d), dcol, P.bg)
     end
-
-    -- Summary
-    local dcol = (totalDelta >= 0) and P.fg_ok or P.fg_crit
-    p_lat4:text(3, 19, "TOTAL DELTA: " .. ((totalDelta >= 0) and "+" or "") .. fmt(totalDelta) .. " items", dcol, P.bg)
 end
 
 local function renderApiTabGrafici()
     local W, H = p_lat4:size()
-    p_lat4:text(3, 4, " PRODUCTION CHARTS (30 min) ", P.fg_title, P.bg)
+    p_lat4:text(3, 6, " PRODUCTION CHARTS (30 min) ", P.fg_title, P.bg)
 
     local products = bees.getProducts()
-    local rowY = 6
-    local maxRate = 0
-    local topProd = nil
+    local rowY = 8
     for _, prod in ipairs(products) do
-        if rowY >= 19 then break end
+        if rowY >= 20 then break end
         local s = bees.snapshot(prod.id)
-        if s.rate_30m > maxRate then maxRate = s.rate_30m; topProd = prod end
         local hist = bees.getHistory(prod.id, 60)
         local pts = {}
         for _, sm in ipairs(hist) do pts[#pts + 1] = sm.c end
@@ -650,13 +604,7 @@ local function renderApiTabGrafici()
         local arrow, acol = trendArrow(s.trend)
         p_lat4:text(W - 2, rowY, arrow, acol, P.bg)
 
-        rowY = rowY + 2
-    end
-
-    -- Summary
-    if topProd then
-        p_lat4:text(3, 19, "TOP PRODUCER: " .. shortName(topProd.id) .. " (" .. fmtRate(maxRate) .. ")",
-            P.fg_ok, P.bg)
+        rowY = rowY + 1
     end
 end
 
@@ -666,18 +614,19 @@ local function renderApi()
     p_lat4.buttons = {}
     p_lat4:box(1, 1, W, H, P.border)
 
-    p_lat4:text(3, 1, " APIARY MONITOR ", P.fg_title, P.bg)
+    -- Header riga 4
+    p_lat4:text(3, 4, " APIARY MONITOR ", P.fg_title, P.bg)
     local ts = textutils.formatTime(os.time("local"), true)
-    p_lat4:text(W - #ts - 2, 1, ts, P.fg_dim, P.bg)
-    p_lat4:divider(1, 3, W, P.border)
+    p_lat4:text(W - #ts - 2, 4, ts, P.fg_dim, P.bg)
+    p_lat4:divider(1, 5, W, P.border)
 
-    -- CONTENT
+    -- CONTENT (6-19)
     if     state.api_tab == "dettaglio"  then renderApiTabDettaglio()
     elseif state.api_tab == "lista"      then renderApiTabLista()
     elseif state.api_tab == "proiezione" then renderApiTabProiezione()
     elseif state.api_tab == "grafici"    then renderApiTabGrafici() end
 
-    -- Tab buttons in basso
+    -- Tab buttons (riga 20-21)
     p_lat4:divider(1, 20, W, P.border)
     local tabs = {
         { id = "dettaglio",  label = "DETAIL"   },
@@ -694,7 +643,6 @@ local function renderApi()
         x = x + w + 1
     end
 
-    -- Nav buttons (per DETAIL)
     if state.api_tab == "dettaglio" then
         p_lat4:divider(1, 22, W, P.border)
         p_lat4:button("api_prev", 3,        23, 12, 2, "< PREV", colors.blue, colors.white)
@@ -784,7 +732,7 @@ end
 
 local function taskStorageBreakdown()
     while true do
-        local ok, br = pcall(rs.itemBreakdown, 5)
+        local ok, br = pcall(rs.itemBreakdown, 4)
         if ok and br then state.storage_breakdown = br end
         sleep(10)
     end
@@ -844,7 +792,7 @@ print("")
 print("Avvio task paralleli...")
 print("Premi Ctrl+T per uscire.")
 print("")
-logger.info("Task paralleli avviati (v8)")
+logger.info("Task paralleli avviati (v9)")
 
 parallel.waitForAny(
     taskEnergy, taskBees, taskSatSync, taskRsHealth,
