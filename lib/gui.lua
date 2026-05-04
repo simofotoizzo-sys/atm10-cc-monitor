@@ -248,6 +248,41 @@ function Panel:sparklineSym(x, y_center, w, halfH, data, opts)
 end
 
 -- ============================================================
+-- Flow mini-bar (2 righe simmetriche: positive sopra, negative sotto)
+-- riga y = positive (>0), riga y+1 = negative (<0)
+-- ============================================================
+function Panel:flowMiniBar(x, y, w, data, opts)
+    opts = opts or {}
+    local posCol = opts.posColor or gui.palette.fg_ok
+    local negCol = opts.negColor or gui.palette.fg_crit
+    local bg = opts.bg or colors.gray
+    -- baseline grigia su entrambe righe
+    self:fill(x, y,     w, 1, bg)
+    self:fill(x, y + 1, w, 1, bg)
+    if not data or #data == 0 then return end
+    local maxAbs = opts.maxAbs or 1
+    if not opts.maxAbs then
+        for _, v in ipairs(data) do
+            if math.abs(v) > maxAbs then maxAbs = math.abs(v) end
+        end
+    end
+    if maxAbs <= 0 then return end
+    for i = 0, w - 1 do
+        local idx = (#data == 1) and 1 or (math.floor(i / (w - 1) * (#data - 1)) + 1)
+        idx = math.max(1, math.min(#data, idx))
+        local v = data[idx]
+        local norm = math.abs(v) / maxAbs
+        if norm > 0.05 then
+            if v > 0 then
+                self:fill(x + i, y, 1, 1, posCol)
+            elseif v < 0 then
+                self:fill(x + i, y + 1, 1, 1, negCol)
+            end
+        end
+    end
+end
+
+-- ============================================================
 -- Stacked bar verticale a segmenti colorati
 -- ============================================================
 function Panel:stackBarVertical(x, y, w, h, segments)
